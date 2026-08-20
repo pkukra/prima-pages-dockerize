@@ -1,0 +1,51 @@
+/* @tailwind base;
+@tailwind components;
+@tailwind utilities; */
+
+/* Mobile-first centered auth layout */
+.guest-layout {
+    min-height: 100vh;
+    padding: 24px 16px;
+    background: #f5f5f5;
+}
+
+.guest-layout .ant-layout-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.guest-logo {
+    width: 80px;
+    height: auto;
+    margin-bottom: 12px;
+}
+
+.guest-layout .ant-typography {
+    max-width: 560px;
+    text-align: center;
+}
+
+.guest-title {
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.guest-content {
+    width: 100%;
+    max-width: 420px;
+}
+
+.auth-card {
+    width: 100%;
+}
+
+@media (min-width: 768px) {
+    .guest-layout {
+        padding: 48px 24px;
+    }
+
+    .guest-content {
+        max-width: 480px;
+    }
+}

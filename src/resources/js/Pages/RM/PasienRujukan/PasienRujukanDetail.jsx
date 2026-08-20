@@ -1,0 +1,239 @@
+import { Head } from "@inertiajs/react";
+import { Col, Row, Card, Tabs, Alert } from "antd";
+
+import config from "../../../config";
+import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
+import PasienRujukanDetailProfile from "./PasienRujukanDetailProfile";
+import PasienRujukanDetailAmnanesaCatatan from "./PasienRujukanDetailAmnanesaCatatan";
+import PasienRujukanDetailSEP from "./PasienRujukanDetailSEP";
+import PasienRujukanDetailResume from "./PasienRujukanDetailResume";
+import PasienRujukanDetailAssesmenIGD from "./PasienRujukanDetailAssesmenIGD";
+import PasienRujukanDetailHasilLab from "./PasienRujukanDetailHasilLab";
+import PasienRujukanDetailCaraMasukPulang from "./PasienRujukanDetailCaraMasukPulang";
+import PasienRujukanDetailProcedureList from "./PasienRujukanDetailProcedureList";
+import PasienRujukanDetailDiagnosaList from "./PasienRujukanDetailDiagnosaList";
+import PasienRujukanNotFound from "./PasienRujukanNotFound";
+import EKlaim from "../Eklaim";
+
+import { useState, useEffect } from "react";
+import axios from "axios";
+
+function PasienRujukanDetail({ auth, pasien: initialPasien, kode_reg }) {
+    const [pasien, setPasien] = useState(initialPasien?.data);
+    const [golbalSEP, setGolbalSEP] = useState(null);
+
+    const [loadingRaber, setLoadingRaber] = useState(true);
+    const [listRaber, setListRaber] = useState([]);
+
+    const [pasienLoading, setPasienLoading] = useState(false);
+    const [disableINACBG, setDisableINACBG] = useState(true);
+
+    const reFetchPasien = () => {
+        setPasienLoading(true);
+        axios
+            .get(route("rm.pasien-rujukan.detail_data", { kode_reg }))
+            .then((response) => setPasien(response?.data?.pasien))
+            .catch((error) =>
+                console.error("Error fetching data pasien:", error)
+            )
+            .finally(() => setPasienLoading(false));
+    };
+
+    const fetchAllRelatedRaber = () => {
+        setLoadingRaber(true);
+        axios
+            .get(
+                route("rm.pasien-rujukan.list_all_raber", {
+                    no_sep: pasien?.FMNOSEP,
+                })
+            )
+            .then((response) => {
+                setListRaber(response?.data || []);
+                setLoadingRaber(false);
+            })
+            .catch((error) =>
+                console.error("Error fetchAllRelatedRaber:", error)
+            )
+            .finally(() => setLoadingRaber(false));
+    };
+
+    useEffect(() => {
+        if (pasien?.FRPUNIT != "PK011") {
+            if (pasien?.FMNOSEP) {
+                fetchAllRelatedRaber();
+            }
+        } else {
+            setLoadingRaber(false);
+        }
+    }, [pasien]);
+
+    const itemTabDokter = listRaber.map((item, index) => ({
+        label: item?.FMDDOKTERN,
+        key: String(index + 1), // gunakan key unik untuk setiap tab
+        children: (
+            <>
+                <Row gutter={[5, 5]}>
+                    <Col span={12}>
+                        <PasienRujukanDetailResume
+                            pasien={pasien}
+                            dataTransaksi={item}
+                        />
+                    </Col>
+                    <Col span={12}>
+                        <PasienRujukanDetailHasilLab
+                            pasien={pasien}
+                            dataTransaksi={item}
+                        />
+                    </Col>
+                </Row>
+            </>
+        ),
+    }));
+
+    let customer_id = pasien?.FRPCUSTOMER_ID;
+    let pasien_id = pasien?.FRPPASIEN_ID;
+
+    if (pasien?.JENIS_RAWAT == "ranap") {
+        customer_id = pasien?.PRWIKD_CUSTOMER;
+        kode_reg = pasien?.FTNO_TRANSAKSI;
+        pasien_id = pasien?.FTKD_PASIEN;
+    }
+
+    const disableInvalidSEP = () => {
+        if (
+            ["X002", "X003"].includes(customer_id) &&
+            pasien?.IS_SEP_VALID == false &&
+            pasien?.LANJUT_RANAP == false
+        ) {
+            return true;
+        }
+        return false;
+    };
+
+    return (
+        <>
+            <Head title="Detail Kunjungan Pasien Rajal" />
+            <div className="py-12">
+                {!pasien ? (
+                    <PasienRujukanNotFound pasien={pasien} />
+                ) : (
+                    <Row gutter={[5, 5]}>
+                        <Col span={24}>
+                            <PasienRujukanDetailProfile pasien={pasien} />
+                        </Col>
+                        <Col span={24}>
+                            <Row gutter={[5, 5]}>
+                                <Col span={12}>
+                                    <PasienRujukanDetailCaraMasukPulang
+                                        pasien={pasien}
+                                        kode_reg={kode_reg}
+                                        pasienLoading={pasienLoading}
+                                        reFetchPasien={reFetchPasien}
+                                    />
+                                </Col>
+                                <Col span={12}>
+                                    <PasienRujukanDetailAmnanesaCatatan
+                                        pasien={pasien}
+                                    />
+                                </Col>
+                            </Row>
+                        </Col>
+
+                        <Col span={24}>
+                            {pasien?.FRPUNIT === "PK011" ? (
+                                <Row gutter={[5, 5]}>
+                                    <Col span={12}>
+                                        <PasienRujukanDetailAssesmenIGD
+                                            pasien={pasien}
+                                        />
+                                    </Col>
+                                    <Col span={12}>
+                                        <PasienRujukanDetailHasilLab
+                                            pasien={pasien}
+                                            dataTransaksi={pasien}
+                                        />
+                                    </Col>
+                                </Row>
+                            ) : pasien?.FRPCUSTOMER_ID != "X002" &&
+                              pasien?.FRPCUSTOMER_ID != "X003" ? (
+                                <Card>
+                                    <Row gutter={[5, 5]}>
+                                        <Col span={12}>
+                                            <PasienRujukanDetailResume
+                                                pasien={pasien}
+                                                dataTransaksi={pasien}
+                                            />
+                                        </Col>
+                                        <Col span={12}>
+                                            <PasienRujukanDetailHasilLab
+                                                pasien={pasien}
+                                                dataTransaksi={pasien}
+                                            />
+                                        </Col>
+                                    </Row>
+                                </Card>
+                            ) : (
+                                // else default
+                                <Card loading={loadingRaber}>
+                                    <Tabs
+                                        defaultActiveKey="1"
+                                        type="card"
+                                        size={"small"}
+                                        style={{ marginBottom: 32 }}
+                                        items={itemTabDokter}
+                                    />
+                                </Card>
+                            )}
+                        </Col>
+                        {config.is_idrg ? (
+                            <Col span={24}>
+                                {disableInvalidSEP() && (
+                                    <Alert
+                                        message="Warning: Invalid SEP"
+                                        type="error"
+                                        banner
+                                        closable
+                                    />
+                                )}
+
+                                <EKlaim
+                                    pasien={pasien}
+                                    setDisableINACBG={setDisableINACBG}
+                                    disableINACBG={disableINACBG}
+                                    reFetchPasien={reFetchPasien}
+                                />
+                            </Col>
+                        ) : (
+                            <>
+                                <Col span={12}>
+                                    <PasienRujukanDetailDiagnosaList
+                                        pasien={pasien}
+                                    />
+                                </Col>
+                                <Col span={12}>
+                                    <PasienRujukanDetailProcedureList
+                                        pasien={pasien}
+                                    />
+                                </Col>
+                            </>
+                        )}
+
+                        <Col span={12}></Col>
+                        <Col span={12}>
+                            <PasienRujukanDetailSEP
+                                reFetchPasien={reFetchPasien}
+                                setGolbalSEP={setGolbalSEP}
+                                pasien={pasien}
+                                user={auth.user}
+                            />
+                        </Col>
+                    </Row>
+                )}
+            </div>
+        </>
+    );
+}
+
+PasienRujukanDetail.layout = (page) => <AuthenticatedLayout children={page} />;
+
+export default PasienRujukanDetail;

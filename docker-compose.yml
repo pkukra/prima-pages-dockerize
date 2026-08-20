@@ -1,0 +1,66 @@
+services:
+
+  site:
+    build:
+      context: .
+      dockerfile: nginx.dockerfile
+    container_name: primapages_nginx
+    ports:
+      - "8888:80"
+    volumes:
+      - ./src:/var/www/html
+    depends_on:
+      - php
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  php:
+    build:
+      context: .
+      dockerfile: php.dockerfile
+    container_name: primapages_php
+    volumes:
+      - ./src:/var/www/html
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  composer:
+    build:
+      context: .
+      dockerfile: composer.dockerfile
+    container_name: primapages_composer
+    volumes:
+      - ./src:/var/www/html
+    working_dir: /var/www/html
+    entrypoint: [ "composer" ]
+    networks:
+      - laravel
+
+  artisan:
+    build:
+      context: .
+      dockerfile: php.dockerfile
+    container_name: primapages_artisan
+    volumes:
+      - ./src:/var/www/html
+    working_dir: /var/www/html
+    entrypoint: [ "php", "/var/www/html/artisan" ]
+    networks:
+      - laravel
+
+  node:
+    build:
+      context: .
+      dockerfile: node.dockerfile
+    container_name: primapages_node
+    volumes:
+      - ./src:/var/www/html
+    working_dir: /var/www/html
+    networks:
+      - laravel
+
+networks:
+  laravel:
+    driver: bridge

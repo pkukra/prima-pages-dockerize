@@ -1,0 +1,559 @@
+<?php
+
+namespace App\Repositories\Casemix;
+
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
+use App\Repositories\RM\RMAuditTrail;
+
+class RanapMonitRepository
+{
+    protected $auditTrail;
+
+    public function __construct()
+    {
+        $this->auditTrail = new RMAuditTrail();
+    }
+
+    /**
+     * Get the list of pasien ranap each bangsal based on bangsal_induk
+     */
+    public function getOrCountPasienRanap($bulan, $tahun, $bangsal_induk, $nomer_rm, $status, $perPage = null, $offset = null, $countOnly = false, $order_kamar = false)
+    {
+        $subQuery = DB::connection('sqlsrvsimrs')
+            ->table('PASIENRAWATINAP')
+            ->select('PRWINO_TRANSAKSI', DB::raw('MAX(PRWITGL_KELUAR) AS TGL_KELUAR'))
+            ->groupBy('PRWINO_TRANSAKSI');
+
+        $latestRowSub = DB::connection('sqlsrvsimrs')
+            ->table('PASIENRAWATINAP AS PRI')
+            ->select('PRI.*')
+            ->joinSub($subQuery, 'LAST', function ($join) {
+                $join->on('PRI.PRWINO_TRANSAKSI', '=', 'LAST.PRWINO_TRANSAKSI')
+                    ->on(DB::raw("ISNULL(PRI.PRWITGL_KELUAR, '1900-01-01')"), '=', DB::raw("ISNULL(LAST.TGL_KELUAR, '1900-01-01')"));
+            });
+
+        $baseQuery = DB::connection('sqlsrvsimrs')
+            ->table('PASIEN AS P')
+            ->joinSub($latestRowSub, 'PRI', function ($join) {
+                $join->on('PRI.PRWIKD_PASIEN', '=', 'P.KD_PASIEN');
+            })
+            ->leftJoin('KAMAR AS K', 'PRI.PRWIKD_KAMAR', '=', 'K.FMKKAMAR_ID')
+            ->leftJoin('DOKTER AS DR', 'PRI.PRWIKD_DOKTER', '=', 'DR.FMDDOKTER_ID')
+            ->when($bangsal_induk, function ($query, $kode_bangsal) {
+                return $query->where('K.FMKKAMARINDUK', $kode_bangsal);
+            })
+            ->when($status == 'dirawat', function ($query) {
+                return $query->whereNull('PRI.PRWITGL_KELUAR');
+            })
+            ->when($status == 'sudah_pulang', function ($query) {
+                return $query->whereNotNull('PRI.PRWITGL_KELUAR');
+            })
+            ->whereMonth('PRI.PRWITGL_INAP', '=', $bulan)
+            ->whereYear('PRI.PRWITGL_INAP', '=', $tahun);
+
+        if ($countOnly) {
+            $total = (clone $baseQuery)->count(DB::raw('DISTINCT PRI.PRWINO_TRANSAKSI'));
+            return $total;
+        }
+
+        // Ambil data detail jika count = false
+        $data = $baseQuery
+            ->select(
+                'PRI.PRWINO_TRANSAKSI',
+                'PRI.PRWIKD_PASIEN',
+                'P.NAMAPASIEN',
+                'DR.FMDDOKTERN',
+                DB::raw('MAX(PRI.PRWITGL_MASUK) AS PRWITGL_MASUK'),
+                DB::raw('MAX(PRI.PRWITGL_KELUAR) AS PRWITGL_KELUAR'),
+                DB::raw("CASE 
+            WHEN MAX(PRI.PRWITGL_KELUAR) IS NULL THEN DATEDIFF(NOW(), MAX(PRI.PRWITGL_MASUK)) + 1
+            ELSE DATEDIFF(MAX(PRI.PRWITGL_KELUAR), MAX(PRI.PRWITGL_MASUK)) + 1
+        END AS TOTAL_HARI")
+            )
+            ->groupBy('PRI.PRWINO_TRANSAKSI', 'PRI.PRWIKD_PASIEN', 'P.NAMAPASIEN', 'DR.FMDDOKTERN')
+            ->orderByDesc('PRWITGL_MASUK')
+            ->get();
+
+        return collect($data)->map(function ($data_detail) {
+            $ranap = get_casemix_ranap_data($data_detail->FTNO_TRANSAKSI);
+            if ($ranap) {
+                foreach ($ranap as $key => $value) {
+                    $data_detail->$key = $value;
+                }
+            }
+
+            $sep = get_sep_by_kode_reg($data_detail->FTNO_TRANSAKSI);
+            if ($sep) {
+                foreach ($sep as $key => $value) {
+                    $data_detail->$key = $value;
+                }
+            }
+
+            $data_detail->TOTAL_BILL = get_total_bill($data_detail->FTNO_TRANSAKSI);
+
+            return $data_detail;
+        });
+    }
+
+
+    /**
+     * Update data in CASEMIX_RANAP table
+     */
+    public function updateCasemixRanap($no_transaksi, $request)
+    {
+        $user = Auth::user();
+
+        $data = [
+            $request->key => $request->data,
+        ];
+
+        try {
+            $pasien = DB::connection('sqlsrvsimrs')
+                ->table('PASIENRAWATINAP AS A')
+                ->where('A.PRWINO_TRANSAKSI', $no_transaksi)
+                ->first();
+
+            if (!$pasien) {
+                Log::error("RanapMonitRepository Pasien dengan transaksi {$no_transaksi} tidak ditemukan.");
+                return false;
+            }
+
+            // Update atau insert data
+            $is_ok = DB::connection('sqlsrvsimrs')
+                ->table('CASEMIX_RANAP')
+                ->updateOrInsert(['NO_TRANSAKSI' => $no_transaksi], $data);
+
+            if ($is_ok) {
+                // Catat audit trail
+                $this->auditTrail->insert([
+                    "object_id"  => $no_transaksi,
+                    "action_id"  => 10,
+                    "user_email" => $user->email,
+                    "user_id"    => $user->id,
+                    "created_at" => now()->timezone('Asia/Jakarta')->format('Y-m-d H:i:s'),
+                    "data"       => $data,
+                ]);
+            }
+
+            return true;
+        } catch (\Exception $e) {
+            Log::error("RanapMonitRepository Error updating CASEMIX_RANAP: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get procedure penyakit by transaksi (MR_DIAGNOSA)
+     *
+     * @param string $no_transaksi
+     * @return \Illuminate\Support\Collection
+     */
+    public function getMrDiagnosaByTransaksi($no_transaksi)
+    {
+        return DB::connection('sqlsrvsimrs')
+            ->table('MR_DIAGNOSA')
+            ->select('MR_DIAGNOSA.*')
+            ->where('MR_DIAGNOSA.MRDNO_TRANSAKSI', $no_transaksi)
+            ->get();
+    }
+
+    /**
+     * Get diagnosa penyakit by transaksi (MR_PENYAKIT)
+     *
+     * @param string $no_transaksi
+     * @return \Illuminate\Support\Collection
+     */
+    public function getDiagnosaByTransaksi($no_transaksi)
+    {
+        return DB::connection('sqlsrvsimrs')
+            ->table('MR_PENYAKIT')
+            ->join('PENYAKIT', 'MR_PENYAKIT.MRPKD_PENYAKIT', '=', 'PENYAKIT.KD_PENYAKIT')
+            ->orderBy('MR_PENYAKIT.MRPURUT_MASUK', 'ASC')
+            ->select('MR_PENYAKIT.*', 'PENYAKIT.PENYAKIT')
+            ->where('MR_PENYAKIT.MRPNO_TRANSAKSI', $no_transaksi)
+            ->get();
+    }
+
+    /**
+     * Delete diagnosa by ID from MR_PENYAKIT table
+     * 
+     * @param int $id
+     * @return boolean
+     */
+    public function deleteDiagnosaById($id)
+    {
+        $user = Auth::user();
+        $conn = DB::connection('sqlsrvsimrs');
+
+        try {
+            // Mulai transaksi
+            $conn->beginTransaction();
+
+            // Ambil data diagnosa sebelum dihapus (untuk audit trail)
+            $deletedDiagnosa = $conn
+                ->table('MR_PENYAKIT')
+                ->where('ID', $id)
+                ->first();
+
+            if (!$deletedDiagnosa) {
+                return false;
+            }
+
+            // Hapus data
+            $deleted = $conn
+                ->table('MR_PENYAKIT')
+                ->where('ID', $id)
+                ->delete();
+
+            if (!$deleted) {
+                $conn->rollBack();
+                return false;
+            }
+
+            // Catat audit trail
+            $auditSuccess = $this->auditTrail->insert([
+                "object_id"  => $deletedDiagnosa->MRPNO_TRANSAKSI,
+                "action_id"  => 2,
+                "user_email" => $user->email,
+                "user_id"    => $user->id,
+                "created_at" => now()->timezone('Asia/Jakarta')->format('Y-m-d H:i:s'),
+                "data"       => $deletedDiagnosa,
+            ]);
+
+            if (!$auditSuccess) {
+                Log::error("RanapMonitRepository deleteDiagnosaById error: gagal simpan audittrail");
+                $conn->rollBack();
+                return false;
+            }
+
+            // Jika semuanya sukses
+            $conn->commit();
+            return true;
+        } catch (\Exception $e) {
+            $conn->rollBack();
+            Log::error("RanapMonitRepository deleteDiagnosaById error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Save diagnosa for pasien rujukan
+     * 
+     * @param array $data
+     * @return boolean
+     */
+    public function saveDiagnosa($data)
+    {
+        $user = Auth::user();
+        $no_transaksikj = $data['no_transaksikj'];
+        $now = now();
+        $tgl_masuk = $data['tgl_masuk']; // Already parsed to a Carbon instance
+
+        // Get the latest MRPURUT_MASUK value to generate next
+        $lastUrutMasuk = DB::connection('sqlsrvsimrs')
+            ->table('MR_PENYAKIT')
+            ->where('MRPNO_TRANSAKSI', $no_transaksikj)
+            ->orderBy('MR_PENYAKIT.MRPURUT_MASUK', 'desc')
+            ->limit(1)
+            ->value('MRPURUT_MASUK');
+
+        $no_urut_masuk = $lastUrutMasuk ? $lastUrutMasuk + 1 : 1;
+
+        // Prepare data to insert into MR_PENYAKIT table
+        $data_to_save = [
+            'MRPKD_PENYAKIT' => $data['icd10_code'],
+            'MRPNO_TRANSAKSI' => $no_transaksikj,
+            'MRPKD_PASIEN' => $data['no_rm'],
+            'MRPKD_UNIT' => $data['kd_unit'],
+            'MRPTGL_MASUK' => $tgl_masuk,
+            'MRPURUT_MASUK' => $no_urut_masuk,
+            'MRPJENIS' => 'RI', // Adjust if needed
+            'MRPSTAT_DIAG' => $data['status_diagnosa'],
+            'MRPKASUS' => $data['kasus'],
+            'USER_ID' => $data['user_id'], // Assuming user ID is passed
+            'UPDATE_DT' => $now,
+        ];
+
+        DB::connection('sqlsrvsimrs')->beginTransaction();
+        try {
+            // Insert data into MR_PENYAKIT table
+            DB::connection('sqlsrvsimrs')
+                ->table('MR_PENYAKIT')
+                ->insert($data_to_save);
+
+            // Insert audit trail
+            $isrecorded = $this->auditTrail->insert([
+                "object_id" => $no_transaksikj,
+                "action_id" => 1, // Adjust the action_id as per your action mapping
+                "user_email" => $user->email,
+                "user_id" => $user->id,
+                "created_at" => $now,
+                "data" => $data_to_save,
+            ]);
+
+            if (!$isrecorded) {
+                Log::error("RanapMonitRepository saveDiagnosaRanap audittrail error");
+                DB::connection('sqlsrvsimrs')->rollBack();
+                return false;
+            }
+        } catch (\Exception $e) {
+            DB::connection('sqlsrvsimrs')->rollBack();
+            Log::error("RanapMonitRepository saveDiagnosaRanap error: " . $e->getMessage());
+            return false;
+        }
+
+        DB::connection('sqlsrvsimrs')->commit();
+        return true;
+    }
+
+    /**
+     * Save procedure for pasien rujukan
+     * 
+     * @param array $data
+     * @return boolean
+     */
+    public function saveProcedureRanap($data)
+    {
+        $no_transaksikj = $data['no_transaksikj'];
+        $now = Carbon::now()->timezone('Asia/Jakarta')->format('Y-m-d H:i:s');
+        $tgl_masuk = $data['tgl_masuk']; // Already parsed to a Carbon instance
+        $user = Auth::user();
+
+        // Get the latest MRTURUT_MASUK value to generate next
+        $lastUrutMasuk = DB::connection('sqlsrvsimrs')
+            ->table('MR_TINDAKAN')
+            ->where('MRTNOTRANSAKSI', $no_transaksikj)
+            ->orderBy('MR_TINDAKAN.MRTURUT_MASUK', 'desc')
+            ->limit(1)
+            ->value('MRTURUT_MASUK');
+
+        $no_urut_masuk = $lastUrutMasuk ? $lastUrutMasuk + 1 : 1;
+
+        $data_to_save = [
+            'MRTKD_TINDAKAN' => $data['icd9_code'],
+            'MRTNOTRANSAKSI' => $no_transaksikj,
+            'MRTKD_PASIEN' => $data['no_rm'],
+            'MRTKD_UNIT' => $data['kd_unit'],
+            'MRTTGL_MASUK' => $tgl_masuk,
+            'MRTURUT_MASUK' => $no_urut_masuk,
+            'MRTTGL_TINDAKAN' => $now,
+        ];
+
+        $conn = DB::connection('sqlsrvsimrs');
+        $conn->beginTransaction();
+
+        try {
+            $conn->table('MR_TINDAKAN')->insert($data_to_save);
+
+            $isrecorded = $this->auditTrail->insert([
+                "object_id"  => $no_transaksikj,
+                "action_id"  => 3,
+                "user_email" => $user->email,
+                "user_id"    => $user->id,
+                "created_at" => $now,
+                "data"       => $data_to_save,
+            ]);
+
+            if (!$isrecorded) {
+                Log::error("RanapMonitRepository saveProcedureRanap: Gagal menyimpan audit trail");
+                $conn->rollBack();
+                return false;
+            }
+
+            $conn->commit();
+            return true;
+        } catch (\Exception $e) {
+            $conn->rollBack();
+            Log::error("RanapMonitRepository saveProcedureRanap error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get procedure penyakit by transaksi (MR_TINDAKAN)
+     *
+     * @param string $no_transaksi
+     * @return \Illuminate\Support\Collection
+     */
+    public function getProcedureByTransaksi($no_transaksi)
+    {
+        return DB::connection('sqlsrvsimrs')
+            ->table('MR_TINDAKAN')
+            ->select('MR_TINDAKAN.*', 'MR_ICD9.FMI9KETERANGAN')
+            ->join('MR_ICD9', 'MR_TINDAKAN.MRTKD_TINDAKAN', '=', 'MR_ICD9.FMI9KODE')
+            ->orderBy('MR_TINDAKAN.MRTURUT_MASUK', 'ASC')
+            ->where('MR_TINDAKAN.MRTNOTRANSAKSI', $no_transaksi)
+            ->get();
+    }
+
+    /**
+     * Delete procedure by ID from MR_TINDAKAN table
+     * 
+     * @param int $id
+     * @return boolean
+     */
+    public function deleteProcedureById($id)
+    {
+        $user = Auth::user();
+        $conn = DB::connection('sqlsrvsimrs');
+
+        try {
+            // Mulai transaksi
+            $conn->beginTransaction();
+
+            // Ambil data sebelum dihapus
+            $deletedProcedure = $conn
+                ->table('MR_TINDAKAN')
+                ->where('ID', $id)
+                ->first();
+
+            if (!$deletedProcedure) {
+                return false;
+            }
+
+            // Hapus data tindakan
+            $deleted = $conn
+                ->table('MR_TINDAKAN')
+                ->where('ID', $id)
+                ->delete();
+
+            if (!$deleted) {
+                $conn->rollBack();
+                return false;
+            }
+
+            // Simpan ke audit trail
+            $auditSuccess = $this->auditTrail->insert([
+                "object_id"  => $deletedProcedure->MRTNOTRANSAKSI,
+                "action_id"  => 4,
+                "user_email" => $user->email,
+                "user_id"    => $user->id,
+                "created_at" => now()->timezone('Asia/Jakarta')->format('Y-m-d H:i:s'),
+                "data"       => $deletedProcedure,
+            ]);
+
+            if (!$auditSuccess) {
+                Log::error("RanapMonitRepository deleteProcedureByIdranap error: gagal simpan audittrail");
+                $conn->rollBack();
+                return false;
+            }
+
+            // Commit jika semua sukses
+            $conn->commit();
+            return true;
+        } catch (\Exception $e) {
+            $conn->rollBack();
+            Log::error("RanapMonitRepository deleteProcedureByIdranap error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get diagnosa penyakit by transaksi (MR_PENYAKIT)
+     *
+     * @param string $no_transaksi
+     * @return \Illuminate\Support\Collection
+     */
+    public function getListBillingTempByTransaksi($no_transaksi)
+    {
+        return DB::connection('sqlsrvsimrs')
+            ->table('CASEMIX_BILLING_TEMP')
+            ->orderBy('CREATED_AT', 'ASC')
+            ->select('*')
+            ->where('NO_TRANSAKSI', $no_transaksi)
+            ->get();
+    }
+
+    /**
+     * Save biliing temp for pasien inap
+     * 
+     * @param array $data
+     * @return boolean
+     */
+    public function saveBillingTemp($data)
+    {
+        $user = Auth::user();
+
+        try {
+            DB::connection('sqlsrvsimrs')
+                ->table('CASEMIX_BILLING_TEMP')
+                ->insert([
+                    'NO_TRANSAKSI' => $data['NO_TRANSAKSI'],
+                    'KETERANGAN' => $data['KETERANGAN'],
+                    'NOMINAL' => $data['NOMINAL'],
+                    'CREATED_BY' => $user->email,
+                ]);
+        } catch (\Exception $e) {
+            Log::error("RanapMonitRepository Error save CASEMIX_BILLING_TEMP: " . $e->getMessage());
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Delete diagnosa by ID from CASEMIX_BILLING_TEMP table
+     * 
+     * @param int $id
+     * @return boolean
+     */
+    public function deleteBillingTempById($id)
+    {
+        try {
+            $deleted = DB::connection('sqlsrvsimrs')
+                ->table('CASEMIX_BILLING_TEMP')
+                ->where('ID', $id)
+                ->delete();
+
+            return $deleted > 0;
+        } catch (\Exception $e) {
+            Log::error("RanapMonitRepository Error delete CASEMIX_BILLING_TEMP: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get list CPPT by transaksi
+     *
+     * @param string $no_transaksi
+     * @return \Illuminate\Support\Collection
+     */
+    public function getCPPTByTransaksi($no_transaksi)
+    {
+        return DB::connection('sqlsrvsimrs')
+            ->table('PKU.dbo.TAC_RI_CPPT as a')
+            ->selectRaw("
+            a.*, 
+            b.nama_lengkap AS FS_NM_PEG, 
+            d.role_id, 
+            RIGHT(a.mdd_date, 2) AS TGL, 
+            e.nama_lengkap AS FS_NM_MEDIS_VERIF
+        ")
+            ->leftJoin('PKU.dbo.TAC_COM_USER as b', 'a.mdb', '=', 'b.user_name')
+            ->leftJoin('PKU.dbo.TAC_COM_USER as c', 'a.mdb', '=', 'c.user_name')
+            ->leftJoin('PKU.dbo.TAC_COM_ROLE_USER as d', 'c.user_id', '=', 'd.user_id')
+            ->leftJoin('PKU.dbo.TAC_COM_USER as e', 'a.FS_KD_MEDIS_VERIF', '=', 'e.user_name')
+            ->where('a.FS_KD_REG', $no_transaksi)
+            ->where('a.FD_TGL_VOID', '3000-01-01')
+            ->orderByDesc('a.mdd_date')
+            ->orderByDesc('a.mdd_time')
+            ->get();
+    }
+
+    /**
+     * Get list kamar induk
+     *
+     * @return \Illuminate\Support\Collection
+     */
+    public function getListKamarIndukRanap()
+    {
+        return DB::connection('sqlsrvsimrs')
+            ->table('KAMAR_INDUK')
+            ->select('*')
+            ->where('IS_BANGSAL', 1)
+            ->get();
+    }
+}

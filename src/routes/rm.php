@@ -1,0 +1,191 @@
+<?php
+
+use App\Http\Controllers\RM\PasienRujukanController;
+use App\Http\Controllers\RM\PasienInapController;
+use App\Http\Controllers\RM\ICDController;
+use App\Http\Controllers\Cesemix\RanapMonitController;
+use Illuminate\Support\Facades\Route;
+use App\Http\Middleware\CheckRole;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+
+Route::prefix('rm')->middleware(['auth'])->group(function () {
+    Route::get('/pasien-inap/get_all_obat/{kode_reg}', [PasienInapController::class, 'get_all_obat'])->name('rm.pasien-inap.get_all_obat');
+});
+
+Route::prefix('rm')->middleware(['auth', CheckRole::class . ':superadmin,koder,klaim,dokter'])->group(function () {
+    Route::get('/', [PasienRujukanController::class, 'index'])->name('rm.index');
+    Route::get('/agregate_sep/{pasien_id}', [PasienRujukanController::class, 'agregate_sep'])->name('rm.agregate_sep');
+
+    Route::get('/get_cusromers', [PasienRujukanController::class, 'get_cusromers'])->name('rm.get_cusromers');
+    Route::post('/search_diagnosis_cbg', [PasienRujukanController::class, 'search_diagnosis_cbg'])->name('rm.search_diagnosis_cbg');
+    Route::post('/search_procedure_cbg', [PasienRujukanController::class, 'search_procedure_cbg'])->name('rm.search_procedure_cbg');
+
+    Route::get('/get_permintaan_rad_n_lab/{kode_reg}', [PasienRujukanController::class, 'get_permintaan_rad_n_lab'])->name('rm.get_permintaan_rad_n_lab');
+    Route::get('/procedures_history/{pasien_id}', [PasienRujukanController::class, 'procedures_history'])->name('rm.procedures_history');
+
+    // Route::get('/list-icd', [ICDController::class, 'index'])->name('rm.icd.index');
+    Route::get('/list-icd', function () {
+        $allowedRoles = [1, 2, 4];
+        if (! in_array(Auth::user()->role_id, $allowedRoles)) {
+            abort(403, 'Unauthorized');
+        }
+
+        return app(ICDController::class)->index();
+    })->middleware('auth')->name('rm.icd.index');
+
+    Route::get('/list-icd-data', [ICDController::class, 'index_data'])->name('rm.icd.index_data');
+    Route::get('/detail-icd-data/{code}', [ICDController::class, 'detail_icd_data'])->name('rm.icd.detail_icd_data');
+    Route::post('/update-icd-warning/{id}', [ICDController::class, 'update_icd_warning'])->name('rm.icd.update_warning');
+    Route::get('/list-icd-alert/{code}', [ICDController::class, 'list_alert'])->name('rm.icd.list_alert');
+    Route::post('/list-icd-alert', [ICDController::class, 'list_alert_by_codes'])->name('rm.icd.list_alert_by_codes');
+    Route::post('/save-icd-alert', [ICDController::class, 'save_alert'])->name('rm.icd.save_alert');
+    Route::put('/update-icd-alert/{id}', [ICDController::class, 'update_alert'])->name('rm.icd.update_alert');
+    Route::delete('/delete-icd-alert/{id}', [ICDController::class, 'delete_alert'])->name('rm.icd.delete_alert');
+
+    Route::prefix('pasien-rujukan')->group(function () {
+
+        Route::get('/list_rujukan', [PasienRujukanController::class, 'list_rujukan'])->name('rm.pasien-rujukan.list_rujukan');
+        Route::get('/list_rujukan_data', [PasienRujukanController::class, 'list_rujukan_data'])->name('rm.pasien-rujukan.list_rujukan_data');
+
+        Route::get('/list/{no_rm}', [PasienRujukanController::class, 'index_data'])->name('rm.pasien-rujukan.list');
+        Route::get('/detail/{kode_reg}', [PasienRujukanController::class, 'show'])->name('rm.pasien-rujukan.detail');
+        Route::get('/detail_data/{kode_reg}', [PasienRujukanController::class, 'show_data'])->name('rm.pasien-rujukan.detail_data');
+        Route::get('/get_nomer_sep/{kode_reg}/{kode_reg_kj}', [PasienRujukanController::class, 'get_nomer_sep'])->name('rm.pasien-rujukan.get_nomer_sep');
+        Route::get('/get_keadaan_keluar_rs/{kode_reg}/', [PasienRujukanController::class, 'get_keadaan_keluar_rs'])->name('rm.pasien-rujukan.get_keadaan_keluar_rs');
+        Route::get('/get_kunjungan_pasien/{kode_reg}/', [PasienRujukanController::class, 'get_kunjungan_pasien'])->name('rm.pasien-rujukan.get_kunjungan_pasien');
+        Route::put('/update_nomer_sep/{kode_reg}/{kode_reg_kj}', [PasienRujukanController::class, 'update_nomer_sep'])->name('rm.pasien-rujukan.update_nomer_sep');
+
+        Route::get('/list_diagnosa/{kode_reg}/{no_sep?}', [PasienRujukanController::class, 'list_diagnosa'])->name('rm.pasien-rujukan.list_diagnosa');
+        Route::post('/cari_penyakit', [PasienRujukanController::class, 'cari_penyakit'])->name('rm.pasien-rujukan.cari_penyakit');
+        Route::post('/save-diagnosa', [PasienRujukanController::class, 'save_diagnosa'])->name('rm.pasien-rujukan.save_diagnosa');
+        Route::delete('/diagnosa/{id}', [PasienRujukanController::class, 'delete_diagnosa'])->name('rm.pasien-rujukan.delete_diagnosa');
+
+        Route::put('/update_diagnosa/{id}', [PasienRujukanController::class, 'update_diagnosa'])->name('rm.pasien-rujukan.update_diagnosa');
+
+        Route::get('/list_procedure/{kode_reg}/{no_sep?}', [PasienRujukanController::class, 'list_procedure'])->name('rm.pasien-rujukan.list_procedure');
+        Route::post('/cari_procedure', [PasienRujukanController::class, 'cari_procedure'])->name('rm.pasien-rujukan.cari_procedure');
+        Route::post('/save-procedure', [PasienRujukanController::class, 'save_procedure'])->name('rm.pasien-rujukan.save_procedure');
+        Route::delete('/procedure/{id}', [PasienRujukanController::class, 'delete_procedure'])->name('rm.pasien-rujukan.delete_procedure');
+
+        Route::put('/update_procedure/{id}', [PasienRujukanController::class, 'update_procedure'])->name('rm.pasien-rujukan.update_procedure');
+
+        Route::get('/get_mr_diagnosa/{kode_reg}', [PasienRujukanController::class, 'get_mr_diagnosa'])->name('rm.pasien-rujukan.get_mr_diagnosa');
+        Route::post('/update_catatan_khusus/{kode_reg}', [PasienRujukanController::class, 'update_catatan_khusus'])->name('rm.pasien-rujukan.update_catatan_khusus');
+        Route::get('/cari_cara_masuk_bpjs', [PasienRujukanController::class, 'cari_cara_masuk_bpjs'])->name('rm.pasien-rujukan.cari_cara_masuk_bpjs');
+        Route::get('/cari_keadaan_keluar_rs', [PasienRujukanController::class, 'cari_keadaan_keluar_rs'])->name('rm.pasien-rujukan.cari_keadaan_keluar_rs');
+        Route::get('/cari_rs_rujukan', [PasienRujukanController::class, 'cari_rs_rujukan'])->name('rm.pasien-rujukan.cari_rs_rujukan');
+        Route::post('/update_keperawatan/{kode_reg_kj}', [PasienRujukanController::class, 'update_keperawatan'])->name('rm.pasien-rujukan.update_keperawatan');
+
+        Route::get('/get_resume/{kode_reg}', [PasienRujukanController::class, 'get_resume'])->name('rm.pasien-rujukan.get_resume');
+        Route::get('/get_hasil_radiologi/{kode_reg}', [PasienRujukanController::class, 'get_hasil_radiologi'])->name('rm.pasien-rujukan.get_hasil_radiologi');
+
+        Route::post('/bridging_import_idrg_to_inacbg/{no_sep}', [PasienRujukanController::class, 'bridging_import_idrg_to_inacbg'])->name('rm.pasien-rujukan.bridging_import_idrg_to_inacbg');
+        Route::post('/bridging_data_process/{no_sep}', [PasienRujukanController::class, 'bridging_data_process'])->name('rm.pasien-rujukan.bridging_data_process');
+        Route::post('/bridging_final_process/{no_sep}', [PasienRujukanController::class, 'bridging_final_process'])->name('rm.pasien-rujukan.bridging_final_process');
+
+        Route::get('/list_all_raber/{no_sep}', [PasienRujukanController::class, 'list_all_raber'])->name('rm.pasien-rujukan.list_all_raber');
+
+        //idrg diagnosa
+        Route::get('/list_diagnosa_idrg/{kode_reg}/{no_sep?}', [PasienRujukanController::class, 'list_diagnosa_idrg'])->name('rm.pasien-rujukan.list_diagnosa_idrg');
+        Route::post('/cari_penyakit_im', [PasienRujukanController::class, 'cari_penyakit_im'])->name('rm.pasien-rujukan.cari_penyakit_im');
+        Route::post('/save-diagnosa-idrg', [PasienRujukanController::class, 'save_diagnosa_idrg'])->name('rm.pasien-rujukan.save_diagnosa_idrg');
+        Route::delete('/diagnosa_idrg/{id}', [PasienRujukanController::class, 'delete_diagnosa_idrg'])->name('rm.pasien-rujukan.delete_diagnosa_idrg');
+        Route::post('/diagnosa_idrg_set_primary/{id}', [PasienRujukanController::class, 'diagnosa_idrg_set_primary'])->name('rm.pasien-rujukan.diagnosa_idrg_set_primary');
+
+        //idrg procedure
+        Route::get('/list_procedure_idrg/{kode_reg}/{no_sep?}', [PasienRujukanController::class, 'list_procedure_idrg'])->name('rm.pasien-rujukan.list_procedure_idrg');
+        Route::post('/cari_procedure_im', [PasienRujukanController::class, 'cari_procedure_im'])->name('rm.pasien-rujukan.cari_procedure_im');
+        Route::post('/save-procedure-idrg', [PasienRujukanController::class, 'save_procedure_idrg'])->name('rm.pasien-rujukan.save_procedure_idrg');
+        Route::delete('/procedure_idrg/{id}', [PasienRujukanController::class, 'delete_procedure_idrg'])->name('rm.pasien-rujukan.delete_procedure_idrg');
+        Route::post('/procedure_idrg_set_primary/{id}', [PasienRujukanController::class, 'procedure_idrg_set_primary'])->name('rm.pasien-rujukan.procedure_idrg_set_primary');
+        Route::post('/procedure_idrg_udpate_multiplicity', [PasienRujukanController::class, 'procedure_idrg_udpate_multiplicity'])->name('rm.pasien-rujukan.procedure_idrg_udpate_multiplicity');
+
+        //per-finalan IDRG
+        Route::get('/get_idrg_group_data/{no_sep}', [PasienRujukanController::class, 'get_idrg_group_data'])->name('rm.pasien-rujukan.get_idrg_group_data');
+        Route::post('/bridging_data_idrg/{no_sep}', [PasienRujukanController::class, 'bridging_data_idrg'])->name('rm.pasien-rujukan.bridging_data_idrg');
+        Route::post('/bridging_final_idrg/{no_sep}', [PasienRujukanController::class, 'bridging_final_idrg'])->name('rm.pasien-rujukan.bridging_final_idrg');
+        Route::post('/edit_ulang_idrg/{no_sep}', [PasienRujukanController::class, 'edit_ulang_idrg'])->name('rm.pasien-rujukan.edit_ulang_idrg');
+
+        //per-finalan INACBG
+        Route::post('/grouping_inacbg_stage_satu/{no_sep}', [PasienRujukanController::class, 'grouping_inacbg_stage_satu'])->name('rm.pasien-rujukan.grouping_inacbg_stage_satu');
+        Route::post('/grouping_inacbg_stage_dua/{no_sep}', [PasienRujukanController::class, 'grouping_inacbg_stage_dua'])->name('rm.pasien-rujukan.grouping_inacbg_stage_dua');
+        Route::get('/get_inacbg_group_data/{no_sep}', [PasienRujukanController::class, 'get_inacbg_group_data'])->name('rm.pasien-rujukan.get_inacbg_group_data');
+        Route::post('/bridging_final_inacbg/{no_sep}', [PasienRujukanController::class, 'bridging_final_inacbg'])->name('rm.pasien-rujukan.bridging_final_inacbg');
+        Route::post('/edit_ulang_inacbg/{no_sep}', [PasienRujukanController::class, 'edit_ulang_inacbg'])->name('rm.pasien-rujukan.edit_ulang_inacbg');
+
+        Route::post('/final_pasien_umum', [PasienRujukanController::class, 'final_pasien_umum'])->name('rm.pasien-rujukan.final_pasien_umum');
+
+        Route::post('/bridging_final_klaim/{no_sep}', [PasienRujukanController::class, 'bridging_final_klaim'])->name('rm.pasien-rujukan.bridging_final_klaim');
+        Route::post('/bridging_reedit_klaim/{no_sep}', [PasienRujukanController::class, 'bridging_reedit_klaim'])->name('rm.pasien-rujukan.bridging_reedit_klaim');
+        Route::post('/bridging_send_invidual_klaim/{no_sep}', [PasienRujukanController::class, 'bridging_send_invidual_klaim'])->name('rm.pasien-rujukan.bridging_send_invidual_klaim');
+        Route::get('/bridging_get_claim_data/{no_sep}', [PasienRujukanController::class, 'bridging_get_claim_data'])->name('rm.bridging_get_claim_data');
+        Route::get('/bridging_cetak_klaim/{no_sep}', [PasienInapController::class, 'bridging_cetak_klaim'])->name('rm.bridging_cetak_klaim');
+
+        Route::post('/store_not_found', [PasienRujukanController::class, 'store_not_found_data'])->name('rm.pasien-rujukan.store_not_found');
+
+        Route::get('/bridging_delete_klaim/{no_sep}', [PasienInapController::class, 'bridging_delete_klaim'])->name('rm.bridging_delete_klaim');
+    });
+
+    Route::prefix('pasien-inap')->group(function () {
+        Route::get('/list_inap', [PasienInapController::class, 'list_inap'])->name('rm.pasien-inap.list_inap');
+        Route::get('/list_inap_data', [PasienInapController::class, 'list_inap_data'])->name('rm.pasien-inap.list_inap_data');
+
+        Route::get('/list/{no_rm}', [PasienInapController::class, 'index_data'])->name('rm.pasien-inap.list');
+        Route::get('/detail/{kode_reg}', [PasienInapController::class, 'show'])->name('rm.pasien-inap.detail');
+        Route::get('/detail_data/{kode_reg}', [PasienInapController::class, 'show_data'])->name('rm.pasien-inap.detail_data');
+        Route::get('/get_keadaan_keluar_rs/{kode_reg}/', [PasienInapController::class, 'get_keadaan_keluar_rs'])->name('rm.pasien-inap.get_keadaan_keluar_rs');
+        Route::get('/get_kunjungan_pasien/{kode_reg}/', [PasienInapController::class, 'get_kunjungan_pasien'])->name('rm.pasien-inap.get_kunjungan_pasien');
+
+
+        Route::get('/list_diagnosa/{kode_reg}', [PasienInapController::class, 'list_diagnosa'])->name('rm.pasien-inap.list_diagnosa');
+        Route::post('/cari_penyakit', [PasienInapController::class, 'cari_penyakit'])->name('rm.pasien-inap.cari_penyakit');
+        Route::post('/save-diagnosa', [PasienInapController::class, 'save_diagnosa'])->name('rm.pasien-inap.save_diagnosa');
+        Route::delete('/diagnosa/{id}', [PasienInapController::class, 'delete_diagnosa'])->name('rm.pasien-inap.delete_diagnosa');
+
+        Route::get('/list_procedure/{kode_reg}', [PasienInapController::class, 'list_procedure'])->name('rm.pasien-inap.list_procedure');
+        Route::post('/cari_procedure', [PasienInapController::class, 'cari_procedure'])->name('rm.pasien-inap.cari_procedure');
+        Route::post('/save-procedure', [PasienInapController::class, 'save_procedure'])->name('rm.pasien-inap.save_procedure');
+        Route::delete('/procedure/{id}', [PasienInapController::class, 'delete_procedure'])->name('rm.pasien-inap.delete_procedure');
+
+        Route::get('/get_resume/{kode_reg}', [PasienInapController::class, 'get_resume'])->name('rm.pasien-inap.get_resume');
+        Route::get('/get_hasil_radiologi/{kode_reg}', [PasienInapController::class, 'get_hasil_radiologi'])->name('rm.pasien-inap.get_hasil_radiologi');
+        Route::get('/get_berkas_rm/{kode_reg}', [PasienInapController::class, 'get_berkas_rm'])->name('rm.pasien-inap.get_berkas_rm');
+
+        Route::get('/get_nomer_sep/{kode_reg}', [PasienInapController::class, 'get_nomer_sep'])->name('rm.pasien-inap.get_nomer_sep');
+        Route::put('/update_nomer_sep/{kode_reg}', [PasienInapController::class, 'update_nomer_sep'])->name('rm.pasien-inap.update_nomer_sep');
+
+        Route::get('/cari_cara_masuk_bpjs', [PasienInapController::class, 'cari_cara_masuk_bpjs'])->name('rm.pasien-inap.cari_cara_masuk_bpjs');
+        Route::get('/cari_keadaan_keluar_rs', [PasienInapController::class, 'cari_keadaan_keluar_rs'])->name('rm.pasien-inap.cari_keadaan_keluar_rs');
+        Route::get('/cari_rs_rujukan', [PasienInapController::class, 'cari_rs_rujukan'])->name('rm.pasien-inap.cari_rs_rujukan');
+        Route::post('/update_keperawatan/{kode_reg}', [PasienInapController::class, 'update_keperawatan'])->name('rm.pasien-inap.update_keperawatan');
+
+        Route::post('/bridging_data_process/{no_sep}', [PasienInapController::class, 'bridging_data_process'])->name('rm.pasien-inap.bridging_data_process');
+        Route::post('/bridging_final_process/{kode_reg}/{no_sep}', [PasienInapController::class, 'bridging_final_process'])->name('rm.pasien-inap.bridging_final_process');
+        Route::get('/bridging_cetak_klaim/{no_sep}', [PasienInapController::class, 'bridging_cetak_klaim'])->name('rm.pasien-inap.bridging_cetak_klaim');
+        Route::get('/bridging_kirim_klaim/{no_sep}', [PasienInapController::class, 'bridging_kirim_klaim'])->name('rm.pasien-inap.bridging_kirim_klaim');
+
+        Route::get('/get_list_cppt/{kode_reg}', [RanapMonitController::class, 'get_list_cppt'])->name('rm.pasien-inap.get_list_cppt');
+
+        Route::post('/bridging_data_idrg/{no_sep}', [PasienInapController::class, 'bridging_data_idrg'])->name('rm.pasien-inap.bridging_data_idrg');
+        Route::post('/bridging_final_idrg/{no_sep}', [PasienInapController::class, 'bridging_final_idrg'])->name('rm.pasien-inap.bridging_final_idrg');
+        Route::post('/edit_ulang_idrg/{no_sep}', [PasienInapController::class, 'edit_ulang_idrg'])->name('rm.pasien-inap.edit_ulang_idrg');
+
+        Route::post('/bridging_import_idrg_to_inacbg/{no_sep}', [PasienInapController::class, 'bridging_import_idrg_to_inacbg'])->name('rm.pasien-inap.bridging_import_idrg_to_inacbg');
+        Route::post('/grouping_inacbg_stage_satu/{no_sep}', [PasienInapController::class, 'grouping_inacbg_stage_satu'])->name('rm.pasien-inap.grouping_inacbg_stage_satu');
+        Route::post('/grouping_inacbg_stage_dua/{no_sep}', [PasienInapController::class, 'grouping_inacbg_stage_dua'])->name('rm.pasien-inap.grouping_inacbg_stage_dua');
+        Route::post('/bridging_final_inacbg/{no_sep}', [PasienInapController::class, 'bridging_final_inacbg'])->name('rm.pasien-inap.bridging_final_inacbg');
+        Route::post('/edit_ulang_inacbg/{no_sep}', [PasienInapController::class, 'edit_ulang_inacbg'])->name('rm.pasien-inap.edit_ulang_inacbg');
+
+        Route::post('/bridging_final_klaim/{no_sep}', [PasienInapController::class, 'bridging_final_klaim'])->name('rm.pasien-inap.bridging_final_klaim');
+        Route::post('/final_pasien_umum', [PasienInapController::class, 'final_pasien_umum'])->name('rm.pasien-inap.final_pasien_umum');
+
+        Route::post('/bridging_reedit_klaim/{no_sep}', [PasienInapController::class, 'bridging_reedit_klaim'])->name('rm.pasien-inap.bridging_reedit_klaim');
+    });
+});
+
+
+Route::prefix('rm')->group(function () {
+    Route::get('/dev_isi_kode_reg/{limit}', [PasienRujukanController::class, 'dev_isi_kode_reg'])->name('rm.dev_isi_kode_reg');
+    Route::get('/dev_isi_kode_reg_ranap/{limit}', [PasienRujukanController::class, 'dev_isi_kode_reg_ranap'])->name('rm.dev_isi_kode_reg_ranap');
+});
