@@ -1,3 +1,5 @@
+# php.dockerfile
+
 FROM php:8.3-fpm-bookworm
 
 RUN apt-get update && apt-get install -y \
@@ -30,6 +32,7 @@ RUN docker-php-ext-configure gd \
 
 COPY ./php/www.conf /usr/local/etc/php-fpm.d/www.conf
 COPY ./php/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY ./php/upload.ini /usr/local/etc/php/conf.d/upload.ini
 
 RUN groupadd -g 1000 laravel \
     && useradd -u 1000 -g laravel -m -s /bin/bash laravel
